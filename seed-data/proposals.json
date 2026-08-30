@@ -1,0 +1,42 @@
+[
+  {
+    "_id": { "$oid": "66d1f2000000000000000001" },
+    "task_id": "66d1f1000000000000000001",
+    "freelancer_email": "elena.freelance@example.com",
+    "proposed_budget": 140,
+    "estimated_days": 2,
+    "cover_note": "Hi David, I have crafted over 50 minimal SaaS brand logos. I can deliver 3 concept drafts within 24 hours.",
+    "status": "pending",
+    "submitted_at": "2026-08-21T09:00:00.000Z"
+  },
+  {
+    "_id": { "$oid": "66d1f2000000000000000002" },
+    "task_id": "66d1f1000000000000000002",
+    "freelancer_email": "alex.freelance@example.com",
+    "proposed_budget": 80,
+    "estimated_days": 1,
+    "cover_note": "Hello Sarah, CSS flexbox and mobile safari bugs are my specialty. I can fix this today and push clean code.",
+    "status": "accepted",
+    "submitted_at": "2026-08-23T10:15:00.000Z"
+  },
+  {
+    "_id": { "$oid": "66d1f2000000000000000003" },
+    "task_id": "66d1f1000000000000000003",
+    "freelancer_email": "michael.freelance@example.com",
+    "proposed_budget": 120,
+    "estimated_days": 3,
+    "cover_note": "I have written extensively on AI and cloud architecture. Guaranteed 100% original SEO content.",
+    "status": "accepted",
+    "submitted_at": "2026-08-16T11:00:00.000Z"
+  },
+  {
+    "_id": { "$oid": "66d1f2000000000000000004" },
+    "task_id": "66d1f1000000000000000005",
+    "freelancer_email": "alex.freelance@example.com",
+    "proposed_budget": 190,
+    "estimated_days": 2,
+    "cover_note": "I specialize in Next.js App Router and dynamic state filters. Will deliver a modular React component with unit tests.",
+    "status": "pending",
+    "submitted_at": "2026-08-27T14:00:00.000Z"
+  }
+]

@@ -1,0 +1,74 @@
+[
+  {
+    "_id": { "$oid": "66d1f1000000000000000001" },
+    "title": "Modern Minimalist Minimalist Logo for SaaS Startup",
+    "category": "Design",
+    "description": "We need a clean, modern, modern minimalist vector logo for our new SaaS landing page. Deliverables include SVG, PNG, and AI vector format.",
+    "budget": 150,
+    "deadline": "2026-09-15T00:00:00.000Z",
+    "client_email": "david.client@example.com",
+    "status": "open",
+    "deliverable_url": null,
+    "createdAt": "2026-08-20T10:00:00.000Z"
+  },
+  {
+    "_id": { "$oid": "66d1f1000000000000000002" },
+    "title": "Fix Responsive CSS & Flexbox Bugs on E-commerce Store",
+    "category": "Development",
+    "description": "Fix alignment bugs on mobile safari browsers for our checkout page grid layout and navbar hamburger menu.",
+    "budget": 80,
+    "deadline": "2026-09-10T00:00:00.000Z",
+    "client_email": "sarah.client@example.com",
+    "status": "in_progress",
+    "deliverable_url": null,
+    "createdAt": "2026-08-22T14:20:00.000Z"
+  },
+  {
+    "_id": { "$oid": "66d1f1000000000000000003" },
+    "title": "Write 1,500 Word SEO Article on AI Trends in 2026",
+    "category": "Writing",
+    "description": "Well-researched SEO optimized blog post covering generative AI, autonomous agentic workflows, and cloud automation.",
+    "budget": 120,
+    "deadline": "2026-09-05T00:00:00.000Z",
+    "client_email": "david.client@example.com",
+    "status": "completed",
+    "deliverable_url": "https://docs.google.com/document/d/sample-article-draft",
+    "createdAt": "2026-08-15T08:00:00.000Z"
+  },
+  {
+    "_id": { "$oid": "66d1f1000000000000000004" },
+    "title": "Setup Google Analytics 4 & Meta Pixel Tracking",
+    "category": "Marketing",
+    "description": "Need an expert to set up custom conversion tags and Google Tag Manager triggers for our lead generation funnel.",
+    "budget": 95,
+    "deadline": "2026-09-20T00:00:00.000Z",
+    "client_email": "sarah.client@example.com",
+    "status": "open",
+    "deliverable_url": null,
+    "createdAt": "2026-08-25T11:45:00.000Z"
+  },
+  {
+    "_id": { "$oid": "66d1f1000000000000000005" },
+    "title": "Build Custom Next.js 16 Dynamic Filter Component",
+    "category": "Development",
+    "description": "Create a reusable client-side search and category filtering component with animated transitions using Framer Motion.",
+    "budget": 200,
+    "deadline": "2026-09-18T00:00:00.000Z",
+    "client_email": "david.client@example.com",
+    "status": "open",
+    "deliverable_url": null,
+    "createdAt": "2026-08-26T16:00:00.000Z"
+  },
+  {
+    "_id": { "$oid": "66d1f1000000000000000006" },
+    "title": "Redesign Figma Prototype for Mobile App Dashboard",
+    "category": "Design",
+    "description": "Refine light and dark themes, component variants, and interactive prototype transitions for an iOS crypto wallet.",
+    "budget": 250,
+    "deadline": "2026-09-22T00:00:00.000Z",
+    "client_email": "sarah.client@example.com",
+    "status": "open",
+    "deliverable_url": null,
+    "createdAt": "2026-08-28T09:30:00.000Z"
+  }
+]
