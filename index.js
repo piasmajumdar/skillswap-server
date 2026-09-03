@@ -74,6 +74,47 @@ app.get("/api/client/tasks", async (req, res) => {
   }
 });
 
+app.get("/api/client/tasks/:taskId", async (req, res) => {
+  try {
+    const taskId = oid(req.params.taskId);
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    const { tasks, proposals, users } = c();
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
+
+    if (!task || task.client_email !== email) {
+      return error(res, 403, "You do not own this task.");
+    }
+
+    const proposalRows = await proposals
+      .find({ task_id: String(taskId) })
+      .sort({ submitted_time: -1, submitted_at: -1 })
+      .toArray();
+    const emails = [...new Set(proposalRows.map((row) => row.freelancer_email))];
+    const people = await users
+      .find({ email: { $in: emails } })
+      .project({ name: 1, email: 1, image: 1 })
+      .toArray();
+    const freelancers = Object.fromEntries(
+      people.map((person) => [person.email, person]),
+    );
+
+    res.json({
+      task,
+      proposals: proposalRows.map((proposal) => ({
+        ...proposal,
+        freelancer: freelancers[proposal.freelancer_email] || {
+          name: proposal.freelancer_email,
+        },
+      })),
+    });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load task details.");
+  }
+});
+
 app.post("/api/client/tasks", async (req, res) => {
   try {
     const { title, description, category, budget, deadline, client_email } =
