@@ -148,6 +148,64 @@ app.patch("/api/client/profile", async (req, res) => {
   }
 });
 
+app.patch("/api/client/tasks/:taskId", async (req, res) => {
+  try {
+    const taskId = oid(req.params.taskId);
+    const email = String(req.body.client_email || "")
+      .trim()
+      .toLowerCase();
+    const { tasks } = c();
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
+    if (!task || task.client_email !== email)
+      return error(res, 403, "You do not own this task.");
+    if (status(task.status) !== "open")
+      return error(res, 409, "Only open tasks can be edited.");
+    const update = {};
+    ["title", "description", "category", "deadline"].forEach((key) => {
+      if (req.body[key] !== undefined)
+        update[key] = String(req.body[key]).trim();
+    });
+    if (req.body.budget !== undefined) update.budget = Number(req.body.budget);
+    await tasks.updateOne({ _id: taskId }, { $set: update });
+    res.json(await tasks.findOne({ _id: taskId }));
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to update task.");
+  }
+});
+
+app.delete("/api/client/tasks/:taskId", async (req, res) => {
+  try {
+    const taskId = oid(req.params.taskId);
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    const { tasks, proposals } = c();
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
+    if (!task || task.client_email !== email)
+      return error(res, 403, "You do not own this task.");
+    if (status(task.status) !== "open")
+      return error(res, 409, "Only open tasks can be deleted.");
+    if (
+      await proposals.findOne({
+        task_id: String(taskId),
+        status: "accepted",
+      })
+    )
+      return error(
+        res,
+        409,
+        "This task has an approved proposal and cannot be deleted.",
+      );
+    await tasks.deleteOne({ _id: taskId });
+    await proposals.deleteMany({ task_id: String(taskId) });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to delete task.");
+  }
+});
+
 
 async function start() {
   await mongo.connect();
