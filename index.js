@@ -74,6 +74,42 @@ app.get("/api/client/tasks", async (req, res) => {
 });
 
 
+app.post("/api/client/tasks", async (req, res) => {
+  try {
+    const { title, description, category, budget, deadline, client_email } =
+      req.body;
+    const email = String(client_email || "")
+      .trim()
+      .toLowerCase();
+    if (
+      !title ||
+      !description ||
+      !category ||
+      !deadline ||
+      !email ||
+      Number(budget) <= 0
+    )
+      return error(res, 400, "All task fields are required.");
+    const task = {
+      title: String(title).trim(),
+      description: String(description).trim(),
+      category: String(category).trim(),
+      budget: Number(budget),
+      deadline: new Date(deadline).toISOString(),
+      client_email: email,
+      status: "open",
+      deliverable_url: null,
+      createdAt: new Date().toISOString(),
+    };
+    const result = await c().tasks.insertOne(task);
+    res.status(201).json({ ...task, _id: result.insertedId });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to create task.");
+  }
+});
+
+
 
 async function start() {
   await mongo.connect();
