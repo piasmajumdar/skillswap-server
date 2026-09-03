@@ -55,7 +55,23 @@ app.get("/api/client/dashboard", async (req, res) => {
     error(res, 500, "Unable to load dashboard data.");
   }
 });
-
+app.get("/api/client/tasks", async (req, res) => {
+  try {
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    if (!email) return error(res, 400, "Client email is required.");
+    res.json(
+      await c()
+        .tasks.find({ client_email: email })
+        .sort({ createdAt: -1 })
+        .toArray(),
+    );
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load tasks.");
+  }
+});
 
 
 
