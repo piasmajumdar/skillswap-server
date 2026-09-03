@@ -136,7 +136,7 @@ app.post("/api/client/tasks", async (req, res) => {
     const task = {
       title: String(title).trim(),
       description: String(description).trim(),
-      category: String(category).trim(),
+      category: String(category).trim().toLowerCase(),
       budget: Number(budget),
       deadline: new Date(deadline).toISOString(),
       client_email: email,
