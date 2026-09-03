@@ -109,6 +109,44 @@ app.post("/api/client/tasks", async (req, res) => {
   }
 });
 
+app.get("/api/client/profile", async (req, res) => {
+  try {
+    res.json(
+      (await c().users.findOne(
+        {
+          email: String(req.query.email || "")
+            .trim()
+            .toLowerCase(),
+        },
+        { projection: { password: 0 } },
+      )) || {},
+    );
+  } catch (e) {
+    error(res, 500, "Unable to load profile.");
+  }
+});
+app.patch("/api/client/profile", async (req, res) => {
+  try {
+    const email = String(req.body.email || "")
+      .trim()
+      .toLowerCase();
+    await c().users.updateOne(
+      { email },
+      {
+        $set: {
+          name: String(req.body.name || "").trim(),
+          image: String(req.body.image || "").trim(),
+          updatedAt: new Date(),
+        },
+      },
+    );
+    res.json(
+      await c().users.findOne({ email }, { projection: { password: 0 } }),
+    );
+  } catch (e) {
+    error(res, 500, "Unable to update profile.");
+  }
+});
 
 
 async function start() {
