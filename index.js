@@ -2,11 +2,13 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { MongoClient, ObjectId } = require("mongodb");
+const Stripe = require("stripe");
 
 dotenv.config();
 const app = express();
 const port = Number(process.env.PORT || 8000);
 const mongo = new MongoClient(process.env.MONGO_DB_URI);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 let db;
 
 app.use(cors());
@@ -16,7 +18,7 @@ const c = () => ({
   tasks: db.collection("tasks"),
   proposals: db.collection("proposals"),
   users: db.collection("user"),
-  payments: db.collection("payment"),
+  payments: db.collection("payments"),
 });
 const oid = (value) => {
   try {
@@ -246,6 +248,9 @@ app.get("/api/freelancer/projects", async (req, res) => {
         status: "accepted",
       })
       .toArray();
+    const acceptedMap = Object.fromEntries(
+      accepted.map((proposal) => [String(proposal.task_id), proposal]),
+    );
     const taskRows = await tasks
       .find({
         _id: { $in: accepted.map((row) => oid(row.task_id)).filter(Boolean) },
@@ -275,6 +280,7 @@ app.get("/api/freelancer/projects", async (req, res) => {
         ...task,
         client: clientMap[task.client_email] || { name: task.client_email },
         payment: paymentMap[String(task._id)] || null,
+        proposal: acceptedMap[String(task._id)] || null,
       })),
     );
   } catch (e) {
@@ -691,45 +697,161 @@ app.post("/api/client/proposals/:proposalId/accept", async (req, res) => {
   }
 });
 
-app.post("/api/client/payments/confirm", async (req, res) => {
+app.post("/api/client/payments/create-checkout-session", async (req, res) => {
   try {
     const proposalId = oid(req.body.proposalId);
     const email = String(req.body.client_email || "")
       .trim()
       .toLowerCase();
-    const { proposals, tasks, payments } = c();
+    const { proposals, tasks } = c();
     const proposal =
       proposalId && (await proposals.findOne({ _id: proposalId }));
     const task =
       proposal && (await tasks.findOne({ _id: oid(proposal.task_id) }));
-    if (!task || task.client_email !== email || proposal.status !== "pending")
-      return error(res, 400, "Payment session is invalid.");
+
+    if (
+      !proposal ||
+      proposal.status !== "pending" ||
+      !task ||
+      task.client_email !== email ||
+      task.status !== "open"
+    ) {
+      return error(
+        res,
+        409,
+        "This proposal is no longer available for payment.",
+      );
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    const amount = Math.round(Number(proposal.proposed_budget) * 100);
+    const checkoutSession = await stripe.checkout.sessions.create({
+      mode: "payment",
+      customer_email: email,
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            unit_amount: amount,
+            product_data: {
+              name: task.title,
+              description: "SkillSwap freelancer task payment",
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      metadata: {
+        proposalId: String(proposal._id),
+        taskId: String(task._id),
+        clientEmail: email,
+        freelancerEmail: proposal.freelancer_email,
+      },
+      success_url:
+        frontendUrl + "/payment/success?session_id={CHECKOUT_SESSION_ID}",
+      cancel_url: frontendUrl + "/dashboard/client/proposals",
+    });
+
+    res.json({ url: checkoutSession.url, sessionId: checkoutSession.id });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to create Stripe checkout session.");
+  }
+});
+
+app.post("/api/client/payments/confirm-session", async (req, res) => {
+  try {
+    const sessionId = String(req.body.session_id || "").trim();
+    if (!sessionId) return error(res, 400, "Stripe session ID is required.");
+
+    const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId);
+    if (
+      checkoutSession.mode !== "payment" ||
+      checkoutSession.status !== "complete" ||
+      checkoutSession.payment_status !== "paid"
+    ) {
+      return error(res, 402, "Stripe payment has not been completed.");
+    }
+
+    const metadata = checkoutSession.metadata || {};
+    const proposalId = oid(metadata.proposalId);
+    const taskId = oid(metadata.taskId);
+    const { proposals, tasks, payments, users } = c();
+    const transactionId = checkoutSession.payment_intent || checkoutSession.id;
+    const existingPayment = await payments.findOne({
+      transaction_id: transactionId,
+    });
+
+    if (existingPayment) {
+      const existingTask = await tasks.findOne({
+        _id: oid(existingPayment.task_id),
+      });
+      const existingFreelancer = await users.findOne({
+        email: existingPayment.freelancer_email,
+      });
+      return res.json({
+        ok: true,
+        alreadyConfirmed: true,
+        payment: existingPayment,
+        task: existingTask,
+        freelancer: existingFreelancer,
+      });
+    }
+
+    const proposal =
+      proposalId && (await proposals.findOne({ _id: proposalId }));
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
+    if (
+      !proposal ||
+      !task ||
+      proposal.task_id !== String(task._id) ||
+      task.client_email !== metadata.clientEmail ||
+      proposal.freelancer_email !== metadata.freelancerEmail ||
+      proposal.status !== "pending" ||
+      task.status !== "open"
+    ) {
+      return error(
+        res,
+        409,
+        "Stripe session does not match an active proposal.",
+      );
+    }
+
     await proposals.updateMany(
-      { task_id: proposal.task_id },
+      { task_id: String(task._id) },
       { $set: { status: "rejected" } },
     );
     await proposals.updateOne(
-      { _id: proposalId },
+      { _id: proposal._id },
       { $set: { status: "accepted" } },
     );
     await tasks.updateOne(
       { _id: task._id },
       { $set: { status: "in_progress" } },
     );
+
     const payment = {
-      client_email: email,
+      client_email: task.client_email,
       freelancer_email: proposal.freelancer_email,
-      task_id: proposal.task_id,
-      amount: Number(proposal.proposed_budget || task.budget),
-      transaction_id: `demo_${Date.now()}`,
+      task_id: String(task._id),
+      amount: Number(checkoutSession.amount_total || 0) / 100,
+      transaction_id: transactionId,
       payment_status: "paid",
       paid_at: new Date().toISOString(),
     };
     await payments.insertOne(payment);
-    res.json({ ok: true, payment });
+    const freelancer = await users.findOne({
+      email: proposal.freelancer_email,
+    });
+    res.json({
+      ok: true,
+      payment,
+      task: { ...task, status: "in_progress" },
+      freelancer,
+    });
   } catch (e) {
     console.error(e);
-    error(res, 500, "Unable to confirm payment.");
+    error(res, 500, "Unable to confirm Stripe payment.");
   }
 });
 
