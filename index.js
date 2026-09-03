@@ -33,6 +33,373 @@ const error = (res, code, message) => res.status(code).json({ error: message });
 
 app.get("/", (req, res) => res.json({ ok: true, service: "skillswap-server" }));
 
+app.get("/api/freelancer/dashboard", async (req, res) => {
+  try {
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    if (!email) return error(res, 400, "Freelancer email is required.");
+    const { proposals, tasks, payments } = c();
+    const proposalRows = await proposals
+      .find({ freelancer_email: email })
+      .sort({ submitted_time: -1, submitted_at: -1 })
+      .toArray();
+    const taskIds = [
+      ...new Set(proposalRows.map((row) => String(row.task_id))),
+    ];
+    const taskRows = await tasks
+      .find({ _id: { $in: taskIds.map(oid).filter(Boolean) } })
+      .toArray();
+    const taskMap = Object.fromEntries(
+      taskRows.map((task) => [String(task._id), task]),
+    );
+    const completedTaskIds = taskRows
+      .filter((task) => task.status === "completed")
+      .map((task) => String(task._id));
+    const paymentRows = await payments
+      .find({ freelancer_email: email, payment_status: "paid" })
+      .toArray();
+    res.json({
+      proposals: proposalRows,
+      tasks: taskRows,
+      completed: completedTaskIds,
+      payments: paymentRows,
+      taskMap,
+    });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load freelancer dashboard.");
+  }
+});
+
+app.get("/api/freelancer/tasks", async (req, res) => {
+  try {
+    const { tasks, users, proposals } = c();
+    const taskRows = await tasks
+      .find({ status: "open" })
+      .sort({ createdAt: -1 })
+      .toArray();
+    const clientEmails = [
+      ...new Set(taskRows.map((task) => task.client_email)),
+    ];
+    const people = await users
+      .find({ email: { $in: clientEmails } })
+      .project({ name: 1, email: 1, image: 1 })
+      .toArray();
+    const clients = Object.fromEntries(
+      people.map((person) => [person.email, person]),
+    );
+    const freelancerEmail = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    const proposalRows = freelancerEmail
+      ? await proposals
+          .find({
+            freelancer_email: freelancerEmail,
+            task_id: { $in: taskRows.map((task) => String(task._id)) },
+          })
+          .toArray()
+      : [];
+    const submitted = new Set(proposalRows.map((row) => String(row.task_id)));
+    res.json(
+      taskRows.map((task) => ({
+        ...task,
+        client: clients[task.client_email] || { name: task.client_email },
+        hasSubmittedProposal: submitted.has(String(task._id)),
+      })),
+    );
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load tasks.");
+  }
+});
+
+app.get("/api/freelancer/tasks/:taskId", async (req, res) => {
+  try {
+    const taskId = oid(req.params.taskId);
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    const { tasks, proposals, users } = c();
+    const task =
+      taskId && (await tasks.findOne({ _id: taskId, status: "open" }));
+    if (!task) return error(res, 404, "Task not found.");
+    const client = await users.findOne(
+      { email: task.client_email },
+      { projection: { name: 1, email: 1, image: 1 } },
+    );
+    const proposal = await proposals.findOne({
+      task_id: String(taskId),
+      freelancer_email: email,
+    });
+    res.json({
+      task,
+      client: client || { name: task.client_email },
+      proposal,
+    });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load task details.");
+  }
+});
+
+app.post("/api/freelancer/proposals", async (req, res) => {
+  try {
+    const {
+      task_id,
+      freelancer_email,
+      proposed_budget,
+      estimated_days,
+      cover_note,
+    } = req.body;
+    const taskId = oid(task_id);
+    const email = String(freelancer_email || "")
+      .trim()
+      .toLowerCase();
+    const { tasks, proposals } = c();
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
+    if (!task || task.status !== "open")
+      return error(res, 409, "Only open tasks accept proposals.");
+    if (
+      !email ||
+      !cover_note ||
+      Number(proposed_budget) <= 0 ||
+      Number(estimated_days) <= 0
+    )
+      return error(res, 400, "All proposal fields are required.");
+    if (
+      await proposals.findOne({
+        task_id: String(taskId),
+        freelancer_email: email,
+      })
+    )
+      return error(
+        res,
+        409,
+        "You have already submitted a proposal for this task.",
+      );
+    const proposal = {
+      task_id: String(taskId),
+      freelancer_email: email,
+      proposed_budget: Number(proposed_budget),
+      estimated_days: Number(estimated_days),
+      cover_note: String(cover_note).trim(),
+      status: "pending",
+      submitted_time: new Date().toISOString(),
+    };
+    const result = await proposals.insertOne(proposal);
+    res.status(201).json({ ...proposal, _id: result.insertedId });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to submit proposal.");
+  }
+});
+
+app.get("/api/freelancer/proposals", async (req, res) => {
+  try {
+    const email = String(req.query.freelancerEmail || "")
+      .trim()
+      .toLowerCase();
+    if (!email) return error(res, 400, "Freelancer email is required.");
+    const { proposals, tasks, users } = c();
+    const rows = await proposals
+      .find({ freelancer_email: email })
+      .sort({ submitted_time: -1, submitted_at: -1 })
+      .toArray();
+    const taskRows = await tasks
+      .find({
+        _id: { $in: rows.map((row) => oid(row.task_id)).filter(Boolean) },
+      })
+      .toArray();
+    const clients = await users
+      .find({ email: { $in: taskRows.map((task) => task.client_email) } })
+      .project({ name: 1, email: 1, image: 1 })
+      .toArray();
+    const taskMap = Object.fromEntries(
+      taskRows.map((task) => [String(task._id), task]),
+    );
+    const clientMap = Object.fromEntries(
+      clients.map((client) => [client.email, client]),
+    );
+    res.json(
+      rows.map((row) => ({
+        ...row,
+        task: taskMap[String(row.task_id)],
+        client: clientMap[taskMap[String(row.task_id)]?.client_email] || null,
+      })),
+    );
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load proposals.");
+  }
+});
+
+app.get("/api/freelancer/projects", async (req, res) => {
+  try {
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    const { proposals, tasks, users, payments } = c();
+    const accepted = await proposals
+      .find({
+        freelancer_email: email,
+        status: "accepted",
+      })
+      .toArray();
+    const taskRows = await tasks
+      .find({
+        _id: { $in: accepted.map((row) => oid(row.task_id)).filter(Boolean) },
+        status: { $in: ["in_progress", "completed"] },
+      })
+      .toArray();
+    const clients = await users
+      .find({
+        email: { $in: taskRows.map((task) => task.client_email) },
+      })
+      .project({ name: 1, email: 1, image: 1 })
+      .toArray();
+    const clientMap = Object.fromEntries(
+      clients.map((client) => [client.email, client]),
+    );
+    const paymentRows = await payments
+      .find({
+        freelancer_email: email,
+        payment_status: "paid",
+      })
+      .toArray();
+    const paymentMap = Object.fromEntries(
+      paymentRows.map((payment) => [String(payment.task_id), payment]),
+    );
+    res.json(
+      taskRows.map((task) => ({
+        ...task,
+        client: clientMap[task.client_email] || { name: task.client_email },
+        payment: paymentMap[String(task._id)] || null,
+      })),
+    );
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load active projects.");
+  }
+});
+
+app.patch("/api/freelancer/projects/:taskId/deliverable", async (req, res) => {
+  try {
+    const taskId = oid(req.params.taskId);
+    const email = String(req.body.freelancer_email || "")
+      .trim()
+      .toLowerCase();
+    const deliverableUrl = String(req.body.deliverable_url || "").trim();
+    const { tasks, proposals } = c();
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
+    const accepted =
+      task &&
+      (await proposals.findOne({
+        task_id: String(taskId),
+        freelancer_email: email,
+        status: "accepted",
+      }));
+    if (!task || !accepted)
+      return error(res, 403, "You cannot submit a deliverable for this task.");
+    if (!deliverableUrl)
+      return error(res, 400, "A deliverable URL is required.");
+    await tasks.updateOne(
+      { _id: taskId },
+      { $set: { deliverable_url: deliverableUrl, status: "completed" } },
+    );
+    res.json(await tasks.findOne({ _id: taskId }));
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to submit deliverable.");
+  }
+});
+
+app.get("/api/freelancer/earnings", async (req, res) => {
+  try {
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    const { payments, tasks, users } = c();
+    const paymentRows = await payments
+      .find({
+        freelancer_email: email,
+        payment_status: "paid",
+      })
+      .sort({ paid_at: -1 })
+      .toArray();
+    const taskRows = await tasks
+      .find({
+        _id: {
+          $in: paymentRows.map((row) => oid(row.task_id)).filter(Boolean),
+        },
+      })
+      .toArray();
+    const clients = await users
+      .find({
+        email: { $in: taskRows.map((task) => task.client_email) },
+      })
+      .project({ name: 1, email: 1 })
+      .toArray();
+    const taskMap = Object.fromEntries(
+      taskRows.map((task) => [String(task._id), task]),
+    );
+    const clientMap = Object.fromEntries(
+      clients.map((client) => [client.email, client]),
+    );
+    res.json(
+      paymentRows.map((payment) => ({
+        ...payment,
+        task: taskMap[String(payment.task_id)],
+        client:
+          clientMap[taskMap[String(payment.task_id)]?.client_email] || null,
+      })),
+    );
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load earnings.");
+  }
+});
+
+app.get("/api/freelancer/profile", async (req, res) => {
+  try {
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    res.json(
+      (await c().users.findOne({ email }, { projection: { password: 0 } })) ||
+        {},
+    );
+  } catch (e) {
+    error(res, 500, "Unable to load profile.");
+  }
+});
+
+app.patch("/api/freelancer/profile", async (req, res) => {
+  try {
+    const email = String(req.body.email || "")
+      .trim()
+      .toLowerCase();
+    await c().users.updateOne(
+      { email },
+      {
+        $set: {
+          name: String(req.body.name || "").trim(),
+          image: String(req.body.image || "").trim(),
+          skills: String(req.body.skills || "").trim(),
+          bio: String(req.body.bio || "").trim(),
+          hourlyRate: Number(req.body.hourlyRate || 0),
+          updatedAt: new Date(),
+        },
+      },
+    );
+    res.json(
+      await c().users.findOne({ email }, { projection: { password: 0 } }),
+    );
+  } catch (e) {
+    error(res, 500, "Unable to update profile.");
+  }
+});
+
 app.get("/api/client/dashboard", async (req, res) => {
   try {
     const email = String(req.query.email || "")
