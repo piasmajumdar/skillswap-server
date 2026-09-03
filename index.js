@@ -91,7 +91,9 @@ app.get("/api/client/tasks/:taskId", async (req, res) => {
       .find({ task_id: String(taskId) })
       .sort({ submitted_time: -1, submitted_at: -1 })
       .toArray();
-    const emails = [...new Set(proposalRows.map((row) => row.freelancer_email))];
+    const emails = [
+      ...new Set(proposalRows.map((row) => row.freelancer_email)),
+    ];
     const people = await users
       .find({ email: { $in: emails } })
       .project({ name: 1, email: 1, image: 1 })
@@ -232,6 +234,9 @@ app.get("/api/client/proposals", async (req, res) => {
     res.json(
       rows.map((row) => ({
         ...row,
+        task_status:
+          taskRows.find((task) => String(task._id) === String(row.task_id))
+            ?.status || "open",
         task_title:
           taskRows.find((task) => String(task._id) === String(row.task_id))
             ?.title || "Untitled task",
@@ -261,7 +266,8 @@ app.patch("/api/client/proposals/:proposalId/reject", async (req, res) => {
       !proposal ||
       proposal.status !== "pending" ||
       !task ||
-      task.client_email !== email
+      task.client_email !== email ||
+      task.status !== "open"
     )
       return error(res, 403, "You cannot change this proposal.");
     await proposals.updateOne(
@@ -290,7 +296,8 @@ app.post("/api/client/proposals/:proposalId/accept", async (req, res) => {
       !proposal ||
       proposal.status !== "pending" ||
       !task ||
-      task.client_email !== email
+      task.client_email !== email ||
+      task.status !== "open"
     )
       return error(res, 403, "You cannot change this proposal.");
     if (
