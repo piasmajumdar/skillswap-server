@@ -600,9 +600,30 @@ app.get("/api/client/tasks", async (req, res) => {
       .trim()
       .toLowerCase();
     if (!email) return error(res, 400, "Client email is required.");
+    const search = String(req.query.search || "").trim();
+    const taskStatus = String(req.query.status || "").trim().toLowerCase();
+    const category = String(req.query.category || "").trim().toLowerCase();
+    const filter = { client_email: email };
+    const allowedStatuses = ["open", "in_progress", "completed"];
+
+    if (taskStatus && taskStatus !== "all" && allowedStatuses.includes(taskStatus)) {
+      filter.status = taskStatus;
+    }
+
+    if (category && category !== "all") {
+      filter.category = category;
+    }
+
+    if (search) {
+      filter.title = {
+        $regex: search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        $options: "i",
+      };
+    }
+
     res.json(
       await c()
-        .tasks.find({ client_email: email })
+        .tasks.find(filter)
         .sort({ createdAt: -1 })
         .toArray(),
     );
