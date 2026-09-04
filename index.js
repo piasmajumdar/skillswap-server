@@ -34,6 +34,28 @@ const status = (value) =>
     .replace(/[- ]/g, "_");
 const error = (res, code, message) => res.status(code).json({ error: message });
 
+app.get("/api/public/stats", async (req, res) => {
+  try {
+    const { users, tasks, payments } = c();
+    const [totalUsers, totalPosts, payoutSummary] = await Promise.all([
+      users.countDocuments({}),
+      tasks.countDocuments({}),
+      payments
+        .aggregate([
+          { $match: { payment_status: "paid" } },
+          { $group: { _id: null, total: { $sum: "$amount" } } },
+        ])
+        .toArray(),
+    ]);
+    const totalPayouts = Number(payoutSummary[0]?.total || 0);
+
+    res.json({ totalUsers, totalPosts, totalPayouts });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load platform statistics.");
+  }
+});
+
 app.get("/api/freelancers", async (req, res) => {
   try {
     const requestedPage = Number.parseInt(req.query.page, 10);
