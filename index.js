@@ -35,6 +35,133 @@ const error = (res, code, message) => res.status(code).json({ error: message });
 
 app.get("/", (req, res) => res.json({ ok: true, service: "skillswap-server" }));
 
+app.get("/api/auth/account-status", async (req, res) => {
+  try {
+    const email = String(req.query.email || "").trim().toLowerCase();
+    const user = await c().users.findOne(
+      { email },
+      { projection: { email: 1, isBlocked: 1, role: 1 } },
+    );
+    res.json({ exists: Boolean(user), isBlocked: Boolean(user?.isBlocked), role: user?.role || null });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to verify account status.");
+  }
+});
+
+app.get("/api/admin/dashboard", async (req, res) => {
+  try {
+    const { users, tasks, payments } = c();
+    const [userRows, taskRows, paymentRows] = await Promise.all([
+      users.find({}).project({ name: 1, email: 1, role: 1, image: 1, createdAt: 1, isBlocked: 1 }).toArray(),
+      tasks.find({}).sort({ createdAt: -1 }).toArray(),
+      payments.find({ payment_status: "paid" }).sort({ paid_at: -1 }).limit(8).toArray(),
+    ]);
+    const roleCounts = userRows.reduce((counts, user) => {
+      const role = String(user.role || "unknown").toLowerCase();
+      counts[role] = (counts[role] || 0) + 1;
+      return counts;
+    }, {});
+    const statusCounts = taskRows.reduce((counts, task) => {
+      const taskStatus = task.status || "open";
+      counts[taskStatus] = (counts[taskStatus] || 0) + 1;
+      return counts;
+    }, {});
+    res.json({
+      totalUsers: userRows.length,
+      totalTasks: taskRows.length,
+      activeTasks: taskRows.filter((task) => task.status === "open" || task.status === "in_progress").length,
+      totalRevenue: paymentRows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+      roleCounts,
+      statusCounts,
+      recentPayments: paymentRows,
+    });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load admin dashboard.");
+  }
+});
+
+app.get("/api/admin/users", async (req, res) => {
+  try {
+    const users = await c().users.find({}).project({ password: 0 }).sort({ createdAt: -1 }).toArray();
+    res.json({ users });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load users.");
+  }
+});
+
+app.patch("/api/admin/users/:userId/block", async (req, res) => {
+  try {
+    const userId = oid(req.params.userId);
+    const isBlocked = Boolean(req.body.isBlocked);
+    if (!userId) return error(res, 400, "A valid user ID is required.");
+    await c().users.updateOne({ _id: userId }, { $set: { isBlocked, updatedAt: new Date() } });
+    res.json(await c().users.findOne({ _id: userId }, { projection: { password: 0 } }));
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to update user access.");
+  }
+});
+
+app.get("/api/admin/tasks", async (req, res) => {
+  try {
+    const { tasks, users, proposals } = c();
+    const taskRows = await tasks.find({}).sort({ createdAt: -1 }).toArray();
+    const clients = await users.find({ email: { $in: taskRows.map((task) => task.client_email) } }).project({ name: 1, email: 1 }).toArray();
+    const clientMap = Object.fromEntries(clients.map((client) => [client.email, client]));
+    const proposalCounts = await proposals.aggregate([
+      { $group: { _id: "$task_id", count: { $sum: 1 } } },
+    ]).toArray();
+    const countMap = Object.fromEntries(proposalCounts.map((item) => [String(item._id), item.count]));
+    res.json({ tasks: taskRows.map((task) => ({
+      ...task,
+      client: clientMap[task.client_email] || { name: task.client_email },
+      proposalCount: countMap[String(task._id)] || 0,
+    })) });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load tasks.");
+  }
+});
+
+app.delete("/api/admin/tasks/:taskId", async (req, res) => {
+  try {
+    const taskId = oid(req.params.taskId);
+    const { tasks, proposals } = c();
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
+    if (!task) return error(res, 404, "Task not found.");
+    if (task.status !== "open") return error(res, 409, "Only open tasks can be deleted.");
+    await tasks.deleteOne({ _id: taskId });
+    await proposals.deleteMany({ task_id: String(taskId) });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to delete task.");
+  }
+});
+
+app.get("/api/admin/payments", async (req, res) => {
+  try {
+    const { payments, tasks, users } = c();
+    const paymentRows = await payments.find({ payment_status: "paid" }).sort({ paid_at: -1 }).toArray();
+    const taskRows = await tasks.find({ _id: { $in: paymentRows.map((row) => oid(row.task_id)).filter(Boolean) } }).toArray();
+    const people = await users.find({ email: { $in: paymentRows.flatMap((row) => [row.client_email, row.freelancer_email]) } }).project({ name: 1, email: 1 }).toArray();
+    const taskMap = Object.fromEntries(taskRows.map((task) => [String(task._id), task]));
+    const peopleMap = Object.fromEntries(people.map((person) => [person.email, person]));
+    res.json({ payments: paymentRows.map((payment) => ({
+      ...payment,
+      task: taskMap[String(payment.task_id)] || null,
+      client: peopleMap[payment.client_email] || null,
+      freelancer: peopleMap[payment.freelancer_email] || null,
+    })) });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load payment history.");
+  }
+});
+
 app.get("/api/freelancer/dashboard", async (req, res) => {
   try {
     const email = String(req.query.email || "")
