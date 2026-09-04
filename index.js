@@ -216,7 +216,9 @@ app.get("/api/freelancer/tasks", async (req, res) => {
     const filter = { status: "open" };
     const sortOrder = sortOption === "oldest"
       ? { createdAt: 1, _id: 1 }
-      : sortOption === "price"
+      : sortOption === "price_high"
+        ? { budget: -1, _id: -1 }
+        : sortOption === "price_low"
         ? { budget: 1, _id: 1 }
         : { createdAt: -1, _id: -1 };
 
