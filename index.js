@@ -212,7 +212,13 @@ app.get("/api/freelancer/tasks", async (req, res) => {
       : 9;
     const search = String(req.query.search || "").trim();
     const category = String(req.query.category || "").trim().toLowerCase();
+    const sortOption = String(req.query.sort || "newest").trim().toLowerCase();
     const filter = { status: "open" };
+    const sortOrder = sortOption === "oldest"
+      ? { createdAt: 1, _id: 1 }
+      : sortOption === "price"
+        ? { budget: 1, _id: 1 }
+        : { createdAt: -1, _id: -1 };
 
     if (search) {
       filter.title = {
@@ -228,7 +234,7 @@ app.get("/api/freelancer/tasks", async (req, res) => {
     const total = await tasks.countDocuments(filter);
     const taskRows = await tasks
       .find(filter)
-      .sort({ createdAt: -1 })
+      .sort(sortOrder)
       .skip((page - 1) * limit)
       .limit(limit)
       .toArray();
