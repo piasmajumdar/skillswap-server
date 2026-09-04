@@ -109,15 +109,16 @@ app.get("/api/freelancers", async (req, res) => {
   }
 });
 
-app.get("/api/freelancers/:email", async (req, res) => {
+app.get("/api/freelancers/:id", async (req, res) => {
   try {
-    const email = decodeURIComponent(String(req.params.email || "")).trim().toLowerCase();
+    const freelancerId = oid(req.params.id);
     const { users, reviews, tasks } = c();
     const freelancer = await users.findOne(
-      { email, role: "freelancer" },
+      { _id: freelancerId, role: "freelancer" },
       { projection: { password: 0 } },
     );
     if (!freelancer) return error(res, 404, "Freelancer not found.");
+    const email = freelancer.email;
 
     const reviewRows = await reviews
       .find({ reviewee_email: email })
