@@ -110,7 +110,55 @@ app.get("/api/freelancers", async (req, res) => {
           },
         },
       },
-      { $project: { password: 0, reviewRows: 0 } },
+      {
+        $lookup: {
+          from: "proposals",
+          let: { freelancerEmail: "$email" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$freelancer_email", "$$freelancerEmail"] },
+                    { $eq: ["$status", "accepted"] },
+                  ],
+                },
+              },
+            },
+            {
+              $lookup: {
+                from: "tasks",
+                let: { taskId: "$task_id" },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $and: [
+                          { $eq: [{ $toString: "$_id" }, "$$taskId"] },
+                          { $eq: ["$status", "completed"] },
+                        ],
+                      },
+                    },
+                  },
+                  { $limit: 1 },
+                ],
+                as: "completedTask",
+              },
+            },
+            { $match: { $expr: { $gt: [{ $size: "$completedTask" }, 0] } } },
+            { $count: "count" },
+          ],
+          as: "completedJobsRows",
+        },
+      },
+      {
+        $addFields: {
+          completed_jobs: {
+            $ifNull: [{ $arrayElemAt: ["$completedJobsRows.count", 0] }, 0],
+          },
+        },
+      },
+      { $project: { password: 0, reviewRows: 0, completedJobsRows: 0 } },
       { $sort: sortOrder },
       {
         $facet: {
