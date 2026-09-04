@@ -56,6 +56,51 @@ app.get("/api/public/stats", async (req, res) => {
   }
 });
 
+app.get("/api/public/reviews", async (req, res) => {
+  try {
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.min(requestedLimit, 3)
+      : 3;
+    const rating = Number.parseInt(req.query.rating, 10) || 5;
+    const { reviews, users } = c();
+    const reviewRows = await reviews
+      .find({ rating })
+      .sort({ created_at: -1 })
+      .limit(limit)
+      .toArray();
+    const emails = [
+      ...new Set(
+        reviewRows.flatMap((review) => [
+          review.reviewer_email,
+          review.reviewee_email,
+        ]),
+      ),
+    ];
+    const people = await users
+      .find({ email: { $in: emails } })
+      .project({ name: 1, email: 1 })
+      .toArray();
+    const peopleMap = Object.fromEntries(
+      people.map((person) => [person.email, person.name]),
+    );
+
+    res.json({
+      reviews: reviewRows.map((review) => ({
+        _id: review._id,
+        rating: review.rating,
+        comment: review.comment,
+        created_at: review.created_at,
+        reviewer_name: peopleMap[review.reviewer_email] || review.reviewer_email,
+        reviewee_name: peopleMap[review.reviewee_email] || review.reviewee_email,
+      })),
+    });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load testimonials.");
+  }
+});
+
 app.get("/api/freelancers", async (req, res) => {
   try {
     const requestedPage = Number.parseInt(req.query.page, 10);
