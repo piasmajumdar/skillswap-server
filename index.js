@@ -204,9 +204,33 @@ app.get("/api/freelancer/dashboard", async (req, res) => {
 app.get("/api/freelancer/tasks", async (req, res) => {
   try {
     const { tasks, users, proposals } = c();
+    const requestedPage = Number.parseInt(req.query.page, 10);
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.min(requestedLimit, 9)
+      : 9;
+    const search = String(req.query.search || "").trim();
+    const category = String(req.query.category || "").trim().toLowerCase();
+    const filter = { status: "open" };
+
+    if (search) {
+      filter.title = {
+        $regex: search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        $options: "i",
+      };
+    }
+
+    if (category && category !== "all") {
+      filter.category = category;
+    }
+
+    const total = await tasks.countDocuments(filter);
     const taskRows = await tasks
-      .find({ status: "open" })
+      .find(filter)
       .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
       .toArray();
     const clientEmails = [
       ...new Set(taskRows.map((task) => task.client_email)),
@@ -230,13 +254,19 @@ app.get("/api/freelancer/tasks", async (req, res) => {
           .toArray()
       : [];
     const submitted = new Set(proposalRows.map((row) => String(row.task_id)));
-    res.json(
-      taskRows.map((task) => ({
+    res.json({
+      tasks: taskRows.map((task) => ({
         ...task,
         client: clients[task.client_email] || { name: task.client_email },
         hasSubmittedProposal: submitted.has(String(task._id)),
       })),
-    );
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (e) {
     console.error(e);
     error(res, 500, "Unable to load tasks.");
