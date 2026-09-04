@@ -572,6 +572,55 @@ app.patch("/api/freelancer/profile", async (req, res) => {
   }
 });
 
+app.get("/api/freelancer/reviews", async (req, res) => {
+  try {
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    if (!email) return error(res, 400, "Freelancer email is required.");
+
+    const { reviews, tasks, users } = c();
+    const reviewRows = await reviews
+      .find({ reviewee_email: email })
+      .sort({ created_at: -1 })
+      .toArray();
+    const taskRows = await tasks
+      .find({
+        _id: {
+          $in: reviewRows.map((review) => oid(review.task_id)).filter(Boolean),
+        },
+      })
+      .project({ title: 1 })
+      .toArray();
+    const reviewerRows = await users
+      .find({
+        email: { $in: [...new Set(reviewRows.map((review) => review.reviewer_email))] },
+      })
+      .project({ name: 1, email: 1, image: 1 })
+      .toArray();
+    const taskMap = Object.fromEntries(
+      taskRows.map((task) => [String(task._id), task]),
+    );
+    const reviewerMap = Object.fromEntries(
+      reviewerRows.map((reviewer) => [reviewer.email, reviewer]),
+    );
+
+    res.json({
+      reviews: reviewRows.map((review) => ({
+        ...review,
+        task_title: taskMap[String(review.task_id)]?.title || "Completed task",
+        reviewer: reviewerMap[review.reviewer_email] || {
+          name: review.reviewer_email,
+          email: review.reviewer_email,
+        },
+      })),
+    });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load freelancer reviews.");
+  }
+});
+
 app.get("/api/client/dashboard", async (req, res) => {
   try {
     const email = String(req.query.email || "")
@@ -744,7 +793,7 @@ app.post("/api/client/tasks/:taskId/review", async (req, res) => {
       .toLowerCase();
     const rating = Number(req.body.rating);
     const comment = String(req.body.comment || "").trim();
-    const { tasks, proposals, reviews } = c();
+    const { tasks, proposals, reviews, users } = c();
     const task = taskId && (await tasks.findOne({ _id: taskId }));
 
     if (!task || task.client_email !== email) {
@@ -782,6 +831,31 @@ app.post("/api/client/tasks/:taskId/review", async (req, res) => {
       created_at: new Date().toISOString(),
     };
     const result = await reviews.insertOne(review);
+
+    const reviewHistory = await reviews
+      .find({ reviewee_email: review.reviewee_email })
+      .project({ rating: 1 })
+      .toArray();
+    const totalReviews = reviewHistory.length;
+    const averageRatings = totalReviews
+      ? Math.round(
+          (reviewHistory.reduce((sum, item) => sum + Number(item.rating || 0), 0) /
+            totalReviews) *
+            100,
+        ) / 100
+      : 0;
+
+    await users.updateOne(
+      { email: review.reviewee_email },
+      {
+        $set: {
+          average_ratings: averageRatings,
+          total_reviews: totalReviews,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
     res.status(201).json({ ...review, _id: result.insertedId });
   } catch (e) {
     console.error(e);
