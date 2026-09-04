@@ -34,6 +34,124 @@ const status = (value) =>
     .replace(/[- ]/g, "_");
 const error = (res, code, message) => res.status(code).json({ error: message });
 
+app.get("/api/freelancers", async (req, res) => {
+  try {
+    const requestedPage = Number.parseInt(req.query.page, 10);
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.min(requestedLimit, 9)
+      : 9;
+    const search = String(req.query.search || "").trim();
+    const sort = String(req.query.sort || "top_rated").trim().toLowerCase();
+    const match = { role: "freelancer" };
+    const safeSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    if (search) {
+      match.$or = [
+        { name: { $regex: safeSearch, $options: "i" } },
+        { email: { $regex: safeSearch, $options: "i" } },
+        { skills: { $regex: safeSearch, $options: "i" } },
+        { bio: { $regex: safeSearch, $options: "i" } },
+      ];
+    }
+
+    const sortOrder = sort === "hourly_rate"
+      ? { hourlyRate: -1, average_ratings: -1, _id: 1 }
+      : { average_ratings: -1, total_reviews: -1, _id: 1 };
+    const { users } = c();
+    const pipeline = [
+      { $match: match },
+      {
+        $lookup: {
+          from: "reviews",
+          localField: "email",
+          foreignField: "reviewee_email",
+          as: "reviewRows",
+        },
+      },
+      {
+        $addFields: {
+          average_ratings: {
+            $cond: [
+              { $gt: [{ $size: "$reviewRows" }, 0] },
+              { $round: [{ $avg: "$reviewRows.rating" }, 2] },
+              { $ifNull: ["$average_ratings", 0] },
+            ],
+          },
+          total_reviews: {
+            $cond: [
+              { $gt: [{ $size: "$reviewRows" }, 0] },
+              { $size: "$reviewRows" },
+              { $ifNull: ["$total_reviews", 0] },
+            ],
+          },
+        },
+      },
+      { $project: { password: 0, reviewRows: 0 } },
+      { $sort: sortOrder },
+      {
+        $facet: {
+          metadata: [{ $count: "total" }],
+          freelancers: [{ $skip: (page - 1) * limit }, { $limit: limit }],
+        },
+      },
+    ];
+    const [result] = await users.aggregate(pipeline).toArray();
+    const total = result?.metadata?.[0]?.total || 0;
+    res.json({
+      freelancers: result?.freelancers || [],
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load freelancers.");
+  }
+});
+
+app.get("/api/freelancers/:email", async (req, res) => {
+  try {
+    const email = decodeURIComponent(String(req.params.email || "")).trim().toLowerCase();
+    const { users, reviews, tasks } = c();
+    const freelancer = await users.findOne(
+      { email, role: "freelancer" },
+      { projection: { password: 0 } },
+    );
+    if (!freelancer) return error(res, 404, "Freelancer not found.");
+
+    const reviewRows = await reviews
+      .find({ reviewee_email: email })
+      .sort({ created_at: -1 })
+      .toArray();
+    const taskRows = await tasks
+      .find({ _id: { $in: reviewRows.map((review) => oid(review.task_id)).filter(Boolean) } })
+      .project({ title: 1 })
+      .toArray();
+    const reviewerRows = await users
+      .find({ email: { $in: [...new Set(reviewRows.map((review) => review.reviewer_email))] } })
+      .project({ name: 1, email: 1, image: 1 })
+      .toArray();
+    const taskMap = Object.fromEntries(taskRows.map((task) => [String(task._id), task]));
+    const reviewerMap = Object.fromEntries(reviewerRows.map((reviewer) => [reviewer.email, reviewer]));
+    const totalReviews = reviewRows.length || Number(freelancer.total_reviews || 0);
+    const averageRatings = reviewRows.length
+      ? Math.round((reviewRows.reduce((sum, review) => sum + Number(review.rating || 0), 0) / reviewRows.length) * 100) / 100
+      : Number(freelancer.average_ratings || 0);
+
+    res.json({
+      freelancer: { ...freelancer, average_ratings: averageRatings, total_reviews: totalReviews },
+      reviews: reviewRows.map((review) => ({
+        ...review,
+        task_title: taskMap[String(review.task_id)]?.title || "Completed task",
+        reviewer: reviewerMap[review.reviewer_email] || { name: review.reviewer_email, email: review.reviewer_email },
+      })),
+    });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load freelancer details.");
+  }
+});
+
 app.get("/", (req, res) => res.json({ ok: true, service: "skillswap-server" }));
 
 app.get("/api/auth/account-status", async (req, res) => {
