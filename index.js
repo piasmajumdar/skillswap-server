@@ -17,6 +17,7 @@ app.use(express.json());
 const c = () => ({
   tasks: db.collection("tasks"),
   proposals: db.collection("proposals"),
+  reviews: db.collection("reviews"),
   users: db.collection("user"),
   payments: db.collection("payments"),
 });
@@ -621,11 +622,30 @@ app.get("/api/client/tasks", async (req, res) => {
       };
     }
 
+    const { tasks, reviews } = c();
+    const taskRows = await tasks
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .toArray();
+    const completedTaskIds = taskRows
+      .filter((task) => task.status === "completed")
+      .map((task) => String(task._id));
+    const reviewRows = await reviews
+      .find({
+        reviewer_email: email,
+        task_id: { $in: completedTaskIds },
+      })
+      .project({ task_id: 1 })
+      .toArray();
+    const reviewedTaskIds = new Set(
+      reviewRows.map((review) => String(review.task_id)),
+    );
+
     res.json(
-      await c()
-        .tasks.find(filter)
-        .sort({ createdAt: -1 })
-        .toArray(),
+      taskRows.map((task) => ({
+        ...task,
+        hasReview: reviewedTaskIds.has(String(task._id)),
+      })),
     );
   } catch (e) {
     console.error(e);
@@ -673,6 +693,99 @@ app.get("/api/client/tasks/:taskId", async (req, res) => {
   } catch (e) {
     console.error(e);
     error(res, 500, "Unable to load task details.");
+  }
+});
+
+app.get("/api/client/tasks/:taskId/review", async (req, res) => {
+  try {
+    const taskId = oid(req.params.taskId);
+    const email = String(req.query.email || "")
+      .trim()
+      .toLowerCase();
+    const { tasks, proposals, reviews, users } = c();
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
+
+    if (!task || task.client_email !== email) {
+      return error(res, 403, "You do not own this task.");
+    }
+    if (task.status !== "completed") {
+      return error(res, 409, "Reviews are available only for completed tasks.");
+    }
+
+    const acceptedProposal = await proposals.findOne({
+      task_id: String(taskId),
+      status: "accepted",
+    });
+    if (!acceptedProposal) {
+      return error(res, 409, "The completed task has no accepted proposal.");
+    }
+
+    const review = await reviews.findOne({
+      task_id: String(taskId),
+      reviewer_email: email,
+    });
+    const freelancer = await users.findOne(
+      { email: acceptedProposal.freelancer_email },
+      { projection: { name: 1, email: 1, image: 1 } },
+    );
+
+    res.json({ task, reviewee_email: acceptedProposal.freelancer_email, freelancer, review });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to load the review form.");
+  }
+});
+
+app.post("/api/client/tasks/:taskId/review", async (req, res) => {
+  try {
+    const taskId = oid(req.params.taskId);
+    const email = String(req.body.reviewer_email || "")
+      .trim()
+      .toLowerCase();
+    const rating = Number(req.body.rating);
+    const comment = String(req.body.comment || "").trim();
+    const { tasks, proposals, reviews } = c();
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
+
+    if (!task || task.client_email !== email) {
+      return error(res, 403, "You do not own this task.");
+    }
+    if (task.status !== "completed") {
+      return error(res, 409, "Reviews are available only for completed tasks.");
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5 || !comment) {
+      return error(res, 400, "A rating from 1 to 5 and a comment are required.");
+    }
+
+    const acceptedProposal = await proposals.findOne({
+      task_id: String(taskId),
+      status: "accepted",
+    });
+    if (!acceptedProposal) {
+      return error(res, 409, "The completed task has no accepted proposal.");
+    }
+
+    const existingReview = await reviews.findOne({
+      task_id: String(taskId),
+      reviewer_email: email,
+    });
+    if (existingReview) {
+      return error(res, 409, "You have already reviewed this task.");
+    }
+
+    const review = {
+      task_id: String(taskId),
+      reviewer_email: email,
+      reviewee_email: acceptedProposal.freelancer_email,
+      rating,
+      comment,
+      created_at: new Date().toISOString(),
+    };
+    const result = await reviews.insertOne(review);
+    res.status(201).json({ ...review, _id: result.insertedId });
+  } catch (e) {
+    console.error(e);
+    error(res, 500, "Unable to submit the review.");
   }
 });
 
