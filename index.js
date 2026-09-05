@@ -3,6 +3,7 @@ const dotenv = require("dotenv");
 const cors = require("cors");
 const { MongoClient, ObjectId } = require("mongodb");
 const Stripe = require("stripe");
+const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
 
 dotenv.config();
 const app = express();
@@ -21,6 +22,32 @@ app.use(
   }),
 );
 app.use(express.json());
+
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`)
+)
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req?.headers?.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ message: "Unauthorized" })
+  }
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized" })
+  }
+  // console.log("token", token)
+
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    // console.log("payload", payload)
+    next();
+  } catch (error) {
+    return res.status(403).json({ message: "Forbidden" })
+  }
+
+};
 
 async function connectDatabase() {
   if (db) return db;
@@ -344,7 +371,7 @@ app.get("/api/auth/account-status", async (req, res) => {
   }
 });
 
-app.get("/api/admin/dashboard", async (req, res) => {
+app.get("/api/admin/dashboard", verifyToken, async (req, res) => {
   try {
     const { users, tasks, payments } = c();
     const [userRows, taskRows, paymentRows] = await Promise.all([
@@ -377,7 +404,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
   }
 });
 
-app.get("/api/admin/users", async (req, res) => {
+app.get("/api/admin/users", verifyToken, async (req, res) => {
   try {
     const users = await c().users.find({}).project({ password: 0 }).sort({ createdAt: -1 }).toArray();
     res.json({ users });
@@ -387,7 +414,7 @@ app.get("/api/admin/users", async (req, res) => {
   }
 });
 
-app.patch("/api/admin/users/:userId/block", async (req, res) => {
+app.patch("/api/admin/users/:userId/block", verifyToken, async (req, res) => {
   try {
     const userId = oid(req.params.userId);
     const isBlocked = Boolean(req.body.isBlocked);
@@ -400,7 +427,7 @@ app.patch("/api/admin/users/:userId/block", async (req, res) => {
   }
 });
 
-app.get("/api/admin/tasks", async (req, res) => {
+app.get("/api/admin/tasks", verifyToken, async (req, res) => {
   try {
     const { tasks, users, proposals } = c();
     const taskRows = await tasks.find({}).sort({ createdAt: -1 }).toArray();
@@ -423,7 +450,7 @@ app.get("/api/admin/tasks", async (req, res) => {
   }
 });
 
-app.delete("/api/admin/tasks/:taskId", async (req, res) => {
+app.delete("/api/admin/tasks/:taskId", verifyToken, async (req, res) => {
   try {
     const taskId = oid(req.params.taskId);
     const { tasks, proposals } = c();
@@ -439,7 +466,7 @@ app.delete("/api/admin/tasks/:taskId", async (req, res) => {
   }
 });
 
-app.get("/api/admin/payments", async (req, res) => {
+app.get("/api/admin/payments", verifyToken, async (req, res) => {
   try {
     const { payments, tasks, users } = c();
     const paymentRows = await payments.find({ payment_status: "paid" }).sort({ paid_at: -1 }).toArray();
@@ -461,7 +488,7 @@ app.get("/api/admin/payments", async (req, res) => {
   }
 });
 
-app.get("/api/freelancer/dashboard", async (req, res) => {
+app.get("/api/freelancer/dashboard", verifyToken, async (req, res) => {
   try {
     const email = String(req.query.email || "")
       .trim()
@@ -609,7 +636,7 @@ app.get("/api/freelancer/tasks/:taskId", async (req, res) => {
   }
 });
 
-app.post("/api/freelancer/proposals", async (req, res) => {
+app.post("/api/freelancer/proposals", verifyToken, async (req, res) => {
   try {
     const {
       task_id,
@@ -661,7 +688,7 @@ app.post("/api/freelancer/proposals", async (req, res) => {
   }
 });
 
-app.get("/api/freelancer/proposals", async (req, res) => {
+app.get("/api/freelancer/proposals", verifyToken, async (req, res) => {
   try {
     const email = String(req.query.freelancerEmail || "")
       .trim()
@@ -700,7 +727,7 @@ app.get("/api/freelancer/proposals", async (req, res) => {
   }
 });
 
-app.get("/api/freelancer/projects", async (req, res) => {
+app.get("/api/freelancer/projects", verifyToken, async (req, res) => {
   try {
     const email = String(req.query.email || "")
       .trim()
@@ -753,7 +780,7 @@ app.get("/api/freelancer/projects", async (req, res) => {
   }
 });
 
-app.patch("/api/freelancer/projects/:taskId/deliverable", async (req, res) => {
+app.patch("/api/freelancer/projects/:taskId/deliverable", verifyToken, async (req, res) => {
   try {
     const taskId = oid(req.params.taskId);
     const email = String(req.body.freelancer_email || "")
@@ -784,7 +811,7 @@ app.patch("/api/freelancer/projects/:taskId/deliverable", async (req, res) => {
   }
 });
 
-app.get("/api/freelancer/earnings", async (req, res) => {
+app.get("/api/freelancer/earnings", verifyToken, async (req, res) => {
   try {
     const email = String(req.query.email || "")
       .trim()
@@ -830,7 +857,7 @@ app.get("/api/freelancer/earnings", async (req, res) => {
   }
 });
 
-app.get("/api/freelancer/profile", async (req, res) => {
+app.get("/api/freelancer/profile", verifyToken, async (req, res) => {
   try {
     const email = String(req.query.email || "")
       .trim()
@@ -844,7 +871,7 @@ app.get("/api/freelancer/profile", async (req, res) => {
   }
 });
 
-app.patch("/api/freelancer/profile", async (req, res) => {
+app.patch("/api/freelancer/profile", verifyToken, async (req, res) => {
   try {
     const email = String(req.body.email || "")
       .trim()
@@ -870,7 +897,7 @@ app.patch("/api/freelancer/profile", async (req, res) => {
   }
 });
 
-app.get("/api/freelancer/reviews", async (req, res) => {
+app.get("/api/freelancer/reviews", verifyToken, async (req, res) => {
   try {
     const email = String(req.query.email || "")
       .trim()
@@ -919,7 +946,7 @@ app.get("/api/freelancer/reviews", async (req, res) => {
   }
 });
 
-app.get("/api/client/dashboard", async (req, res) => {
+app.get("/api/client/dashboard", verifyToken, async (req, res) => {
   try {
     const email = String(req.query.email || "")
       .trim()
@@ -942,7 +969,7 @@ app.get("/api/client/dashboard", async (req, res) => {
   }
 });
 
-app.get("/api/client/tasks", async (req, res) => {
+app.get("/api/client/tasks", verifyToken, async (req, res) => {
   try {
     const email = String(req.query.email || "")
       .trim()
@@ -1000,7 +1027,7 @@ app.get("/api/client/tasks", async (req, res) => {
   }
 });
 
-app.get("/api/client/tasks/:taskId", async (req, res) => {
+app.get("/api/client/tasks/:taskId", verifyToken, async (req, res) => {
   try {
     const taskId = oid(req.params.taskId);
     const email = String(req.query.email || "")
@@ -1043,7 +1070,7 @@ app.get("/api/client/tasks/:taskId", async (req, res) => {
   }
 });
 
-app.get("/api/client/tasks/:taskId/review", async (req, res) => {
+app.get("/api/client/tasks/:taskId/review", verifyToken, async (req, res) => {
   try {
     const taskId = oid(req.params.taskId);
     const email = String(req.query.email || "")
@@ -1083,7 +1110,7 @@ app.get("/api/client/tasks/:taskId/review", async (req, res) => {
   }
 });
 
-app.post("/api/client/tasks/:taskId/review", async (req, res) => {
+app.post("/api/client/tasks/:taskId/review", verifyToken, async (req, res) => {
   try {
     const taskId = oid(req.params.taskId);
     const email = String(req.body.reviewer_email || "")
@@ -1161,7 +1188,7 @@ app.post("/api/client/tasks/:taskId/review", async (req, res) => {
   }
 });
 
-app.post("/api/client/tasks", async (req, res) => {
+app.post("/api/client/tasks", verifyToken, async (req, res) => {
   try {
     const { title, description, category, budget, deadline, client_email } =
       req.body;
@@ -1196,7 +1223,7 @@ app.post("/api/client/tasks", async (req, res) => {
   }
 });
 
-app.patch("/api/client/tasks/:taskId", async (req, res) => {
+app.patch("/api/client/tasks/:taskId", verifyToken, async (req, res) => {
   try {
     const taskId = oid(req.params.taskId);
     const email = String(req.body.client_email || "")
@@ -1222,7 +1249,7 @@ app.patch("/api/client/tasks/:taskId", async (req, res) => {
   }
 });
 
-app.delete("/api/client/tasks/:taskId", async (req, res) => {
+app.delete("/api/client/tasks/:taskId", verifyToken, async (req, res) => {
   try {
     const taskId = oid(req.params.taskId);
     const email = String(req.query.email || "")
@@ -1254,7 +1281,7 @@ app.delete("/api/client/tasks/:taskId", async (req, res) => {
   }
 });
 
-app.get("/api/client/proposals", async (req, res) => {
+app.get("/api/client/proposals", verifyToken, async (req, res) => {
   try {
     const email = String(req.query.email || "")
       .trim()
@@ -1295,7 +1322,7 @@ app.get("/api/client/proposals", async (req, res) => {
   }
 });
 
-app.patch("/api/client/proposals/:proposalId/reject", async (req, res) => {
+app.patch("/api/client/proposals/:proposalId/reject", verifyToken, async (req, res) => {
   try {
     const proposalId = oid(req.params.proposalId);
     const email = String(req.body.client_email || "")
@@ -1325,7 +1352,7 @@ app.patch("/api/client/proposals/:proposalId/reject", async (req, res) => {
   }
 });
 
-app.post("/api/client/proposals/:proposalId/accept", async (req, res) => {
+app.post("/api/client/proposals/:proposalId/accept", verifyToken, async (req, res) => {
   try {
     const proposalId = oid(req.params.proposalId);
     const email = String(req.body.client_email || "")
@@ -1368,7 +1395,7 @@ app.post("/api/client/proposals/:proposalId/accept", async (req, res) => {
   }
 });
 
-app.post("/api/client/payments/create-checkout-session", async (req, res) => {
+app.post("/api/client/payments/create-checkout-session", verifyToken, async (req, res) => {
   try {
     const proposalId = oid(req.body.proposalId);
     const email = String(req.body.client_email || "")
@@ -1430,7 +1457,7 @@ app.post("/api/client/payments/create-checkout-session", async (req, res) => {
   }
 });
 
-app.post("/api/client/payments/confirm-session", async (req, res) => {
+app.post("/api/client/payments/confirm-session", verifyToken, async (req, res) => {
   try {
     const sessionId = String(req.body.session_id || "").trim();
     if (!sessionId) return error(res, 400, "Stripe session ID is required.");
@@ -1551,7 +1578,7 @@ app.post("/api/client/payments/confirm-session", async (req, res) => {
   }
 });
 
-app.get("/api/client/profile", async (req, res) => {
+app.get("/api/client/profile", verifyToken, async (req, res) => {
   try {
     res.json(
       (await c().users.findOne(
@@ -1567,7 +1594,7 @@ app.get("/api/client/profile", async (req, res) => {
     error(res, 500, "Unable to load profile.");
   }
 });
-app.patch("/api/client/profile", async (req, res) => {
+app.patch("/api/client/profile", verifyToken, async (req, res) => {
   try {
     const email = String(req.body.email || "")
       .trim()
