@@ -1,6 +1,6 @@
 const express = require("express");
-const cors = require("cors");
 const dotenv = require("dotenv");
+const cors = require("cors");
 const { MongoClient, ObjectId } = require("mongodb");
 const Stripe = require("stripe");
 
@@ -12,7 +12,14 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 let db;
 let databaseConnection;
 
-app.use(cors());
+app.use(
+  cors({
+    origin: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    optionsSuccessStatus: 204,
+  }),
+);
 app.use(express.json());
 
 async function connectDatabase() {
