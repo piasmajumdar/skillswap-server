@@ -6,13 +6,38 @@ const Stripe = require("stripe");
 
 dotenv.config();
 const app = express();
-const port = Number(process.env.PORT);
+const port = Number(process.env.PORT || 8000);
 const mongo = new MongoClient(process.env.MONGO_DB_URI);
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 let db;
+let databaseConnection;
 
 app.use(cors());
 app.use(express.json());
+
+async function connectDatabase() {
+  if (db) return db;
+  if (!databaseConnection) {
+    databaseConnection = (async () => {
+      await mongo.connect();
+      db = mongo.db("skillswap");
+      await db.command({ ping: 1 });
+      await ensurePaymentIndex();
+      return db;
+    })();
+  }
+  return databaseConnection;
+}
+
+app.use(async (req, res, next) => {
+  try {
+    await connectDatabase();
+    next();
+  } catch (e) {
+    console.error(e);
+    error(res, 503, "Database is temporarily unavailable.");
+  }
+});
 
 const c = () => ({
   tasks: db.collection("tasks"),
@@ -1559,14 +1584,16 @@ app.patch("/api/client/profile", async (req, res) => {
 });
 
 async function start() {
-  // await mongo.connect();
-  db = mongo.db("skillswap");
-  // await db.command({ ping: 1 });
-  await ensurePaymentIndex();
+  await connectDatabase();
   console.log("Connected to MongoDB");
   app.listen(port, () => console.log(`SkillSwap API listening on ${port}`));
 }
-start().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+
+if (require.main === module) {
+  start().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
+
+module.exports = app;
