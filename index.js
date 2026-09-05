@@ -6,7 +6,7 @@ const Stripe = require("stripe");
 
 dotenv.config();
 const app = express();
-const port = Number(process.env.PORT || 8000);
+const port = Number(process.env.PORT);
 const mongo = new MongoClient(process.env.MONGO_DB_URI);
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 let db;
@@ -268,7 +268,9 @@ app.get("/api/freelancers/:id", async (req, res) => {
   }
 });
 
-app.get("/", (req, res) => res.json({ ok: true, service: "skillswap-server" }));
+app.get('/', (req, res) => {
+  res.send("Server is running")
+})
 
 app.get("/api/auth/account-status", async (req, res) => {
   try {
@@ -350,11 +352,13 @@ app.get("/api/admin/tasks", async (req, res) => {
       { $group: { _id: "$task_id", count: { $sum: 1 } } },
     ]).toArray();
     const countMap = Object.fromEntries(proposalCounts.map((item) => [String(item._id), item.count]));
-    res.json({ tasks: taskRows.map((task) => ({
-      ...task,
-      client: clientMap[task.client_email] || { name: task.client_email },
-      proposalCount: countMap[String(task._id)] || 0,
-    })) });
+    res.json({
+      tasks: taskRows.map((task) => ({
+        ...task,
+        client: clientMap[task.client_email] || { name: task.client_email },
+        proposalCount: countMap[String(task._id)] || 0,
+      }))
+    });
   } catch (e) {
     console.error(e);
     error(res, 500, "Unable to load tasks.");
@@ -385,12 +389,14 @@ app.get("/api/admin/payments", async (req, res) => {
     const people = await users.find({ email: { $in: paymentRows.flatMap((row) => [row.client_email, row.freelancer_email]) } }).project({ name: 1, email: 1 }).toArray();
     const taskMap = Object.fromEntries(taskRows.map((task) => [String(task._id), task]));
     const peopleMap = Object.fromEntries(people.map((person) => [person.email, person]));
-    res.json({ payments: paymentRows.map((payment) => ({
-      ...payment,
-      task: taskMap[String(payment.task_id)] || null,
-      client: peopleMap[payment.client_email] || null,
-      freelancer: peopleMap[payment.freelancer_email] || null,
-    })) });
+    res.json({
+      payments: paymentRows.map((payment) => ({
+        ...payment,
+        task: taskMap[String(payment.task_id)] || null,
+        client: peopleMap[payment.client_email] || null,
+        freelancer: peopleMap[payment.freelancer_email] || null,
+      }))
+    });
   } catch (e) {
     console.error(e);
     error(res, 500, "Unable to load payment history.");
@@ -454,8 +460,8 @@ app.get("/api/freelancer/tasks", async (req, res) => {
       : sortOption === "price_high"
         ? { budget: -1, _id: -1 }
         : sortOption === "price_low"
-        ? { budget: 1, _id: 1 }
-        : { createdAt: -1, _id: -1 };
+          ? { budget: 1, _id: 1 }
+          : { createdAt: -1, _id: -1 };
 
     if (search) {
       filter.title = {
@@ -490,11 +496,11 @@ app.get("/api/freelancer/tasks", async (req, res) => {
       .toLowerCase();
     const proposalRows = freelancerEmail
       ? await proposals
-          .find({
-            freelancer_email: freelancerEmail,
-            task_id: { $in: taskRows.map((task) => String(task._id)) },
-          })
-          .toArray()
+        .find({
+          freelancer_email: freelancerEmail,
+          task_id: { $in: taskRows.map((task) => String(task._id)) },
+        })
+        .toArray()
       : [];
     const submitted = new Set(proposalRows.map((row) => String(row.task_id)));
     res.json({
@@ -773,7 +779,7 @@ app.get("/api/freelancer/profile", async (req, res) => {
       .toLowerCase();
     res.json(
       (await c().users.findOne({ email }, { projection: { password: 0 } })) ||
-        {},
+      {},
     );
   } catch (e) {
     error(res, 500, "Unable to load profile.");
@@ -1073,10 +1079,10 @@ app.post("/api/client/tasks/:taskId/review", async (req, res) => {
     const totalReviews = reviewHistory.length;
     const averageRatings = totalReviews
       ? Math.round(
-          (reviewHistory.reduce((sum, item) => sum + Number(item.rating || 0), 0) /
-            totalReviews) *
-            100,
-        ) / 100
+        (reviewHistory.reduce((sum, item) => sum + Number(item.rating || 0), 0) /
+          totalReviews) *
+        100,
+      ) / 100
       : 0;
 
     await users.updateOne(
@@ -1502,9 +1508,9 @@ app.patch("/api/client/profile", async (req, res) => {
 });
 
 async function start() {
-  await mongo.connect();
+  // await mongo.connect();
   db = mongo.db("skillswap");
-  await db.command({ ping: 1 });
+  // await db.command({ ping: 1 });
   console.log("Connected to MongoDB");
   app.listen(port, () => console.log(`SkillSwap API listening on ${port}`));
 }
