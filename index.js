@@ -34,6 +34,32 @@ const status = (value) =>
     .replace(/[- ]/g, "_");
 const error = (res, code, message) => res.status(code).json({ error: message });
 
+async function ensurePaymentIndex() {
+  const payments = db.collection("payments");
+  const duplicateGroups = await payments
+    .aggregate([
+      { $match: { transaction_id: { $type: "string" } } },
+      {
+        $group: {
+          _id: "$transaction_id",
+          ids: { $push: "$_id" },
+          count: { $sum: 1 },
+        },
+      },
+      { $match: { count: { $gt: 1 } } },
+    ])
+    .toArray();
+
+  for (const group of duplicateGroups) {
+    await payments.deleteMany({ _id: { $in: group.ids.slice(1) } });
+  }
+
+  await payments.createIndex(
+    { transaction_id: 1 },
+    { name: "unique_payment_transaction", unique: true, sparse: true },
+  );
+}
+
 app.get("/api/public/stats", async (req, res) => {
   try {
     const { users, tasks, payments } = c();
@@ -1391,11 +1417,28 @@ app.post("/api/client/payments/confirm-session", async (req, res) => {
     const taskId = oid(metadata.taskId);
     const { proposals, tasks, payments, users } = c();
     const transactionId = checkoutSession.payment_intent || checkoutSession.id;
+    const proposal =
+      proposalId && (await proposals.findOne({ _id: proposalId }));
+    const task = taskId && (await tasks.findOne({ _id: taskId }));
     const existingPayment = await payments.findOne({
       transaction_id: transactionId,
     });
 
     if (existingPayment) {
+      await proposals.updateMany(
+        { task_id: String(existingPayment.task_id), _id: { $ne: proposalId } },
+        { $set: { status: "rejected" } },
+      );
+      if (proposalId) {
+        await proposals.updateOne(
+          { _id: proposalId },
+          { $set: { status: "accepted" } },
+        );
+      }
+      await tasks.updateOne(
+        { _id: oid(existingPayment.task_id) },
+        { $set: { status: "in_progress" } },
+      );
       const existingTask = await tasks.findOne({
         _id: oid(existingPayment.task_id),
       });
@@ -1411,9 +1454,6 @@ app.post("/api/client/payments/confirm-session", async (req, res) => {
       });
     }
 
-    const proposal =
-      proposalId && (await proposals.findOne({ _id: proposalId }));
-    const task = taskId && (await tasks.findOne({ _id: taskId }));
     if (
       !proposal ||
       !task ||
@@ -1430,8 +1470,30 @@ app.post("/api/client/payments/confirm-session", async (req, res) => {
       );
     }
 
+    const payment = {
+      client_email: task.client_email,
+      freelancer_email: proposal.freelancer_email,
+      task_id: String(task._id),
+      amount: Number(checkoutSession.amount_total || 0) / 100,
+      transaction_id: transactionId,
+      payment_status: "paid",
+      paid_at: new Date().toISOString(),
+    };
+    try {
+      await payments.updateOne(
+        { transaction_id: transactionId },
+        { $setOnInsert: payment },
+        { upsert: true },
+      );
+    } catch (e) {
+      if (e.code !== 11000) throw e;
+    }
+
+    const confirmedPayment = await payments.findOne({
+      transaction_id: transactionId,
+    });
     await proposals.updateMany(
-      { task_id: String(task._id) },
+      { task_id: String(task._id), _id: { $ne: proposal._id } },
       { $set: { status: "rejected" } },
     );
     await proposals.updateOne(
@@ -1442,23 +1504,12 @@ app.post("/api/client/payments/confirm-session", async (req, res) => {
       { _id: task._id },
       { $set: { status: "in_progress" } },
     );
-
-    const payment = {
-      client_email: task.client_email,
-      freelancer_email: proposal.freelancer_email,
-      task_id: String(task._id),
-      amount: Number(checkoutSession.amount_total || 0) / 100,
-      transaction_id: transactionId,
-      payment_status: "paid",
-      paid_at: new Date().toISOString(),
-    };
-    await payments.insertOne(payment);
     const freelancer = await users.findOne({
       email: proposal.freelancer_email,
     });
     res.json({
       ok: true,
-      payment,
+      payment: confirmedPayment || payment,
       task: { ...task, status: "in_progress" },
       freelancer,
     });
@@ -1511,6 +1562,7 @@ async function start() {
   // await mongo.connect();
   db = mongo.db("skillswap");
   // await db.command({ ping: 1 });
+  await ensurePaymentIndex();
   console.log("Connected to MongoDB");
   app.listen(port, () => console.log(`SkillSwap API listening on ${port}`));
 }
